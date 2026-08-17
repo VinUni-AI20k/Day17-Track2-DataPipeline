@@ -63,27 +63,36 @@ def main() -> int:
     n_src = len(list(SRC.glob("*.parquet")))
     print(f"  nguồn : {SRC}  ({n_src:,} file)")
 
-    # TODO(nhiệm vụ 4): hiện thực khung COPY ... TO ... ở phần docstring.
-    #
-    #   con.execute(f"""
-    #       copy (
-    #           select * from read_parquet('{SRC}/*.parquet')
-    #           order by ...
-    #       ) to '{DST}' (
-    #           format parquet,
-    #           partition_by (...),
-    #           overwrite_or_ignore,
-    #           row_group_size ...
-    #       )
-    #   """)
-    #
-    # Sau đó kiểm tra không mất hàng nào:
-    #
-    #   assert <số row dataset cũ> == <số row dataset mới>
+    # Đếm số row trước khi compact
+    n_rows = con.execute(
+        f"SELECT count(*) FROM read_parquet('{SRC}/*.parquet')"
+    ).fetchone()[0]
+    print(f"  số hàng: {n_rows:,}")
 
-    print("\n  tools/compact.py chưa được hiện thực — đây là nhiệm vụ 4.")
-    print("  Mở file này, đọc phần KHUNG THỰC HIỆN ở đầu file và điền vào TODO.")
-    print("  Hướng dẫn từng bước: GUIDE.md mục 4.\n")
+    # Compact: partition theo DATE(event_time), order theo customer_name
+    # ROW_GROUP_SIZE = 10000: mỗi ngày (~9,500 events) gói gọn trong ~1 row group
+    # Partition theo ngày vì query filter theo event_time và cần ~14 thư mục
+    con.execute(f"""
+        COPY (
+            SELECT *
+            FROM read_parquet('{SRC}/*.parquet')
+            ORDER BY event_date, customer_name
+        ) TO '{DST}' (
+            FORMAT parquet,
+            PARTITION_BY (event_date),
+            OVERWRITE_OR_IGNORE,
+            ROW_GROUP_SIZE 10000
+        )
+    """)
+
+    # Kiểm tra không mất hàng
+    n_dst = con.execute(
+        f"SELECT count(*) FROM read_parquet('{DST}/**/*.parquet')"
+    ).fetchone()[0]
+    n_dst_files = len(list(DST.glob("**/*.parquet")))
+    print(f"  đích  : {DST}  ({n_dst_files:,} file, {n_dst:,} hàng)")
+    assert n_rows == n_dst, f"Mất dữ liệu! nguồn={n_rows}, đích={n_dst}"
+
     return 0
 
 
